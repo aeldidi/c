@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <setjmp.h>
 #include <stddef.h>
 #include <string.h>
 
@@ -9,7 +10,7 @@ arena_alloc(Arena* a, ptrdiff_t size, ptrdiff_t align, ptrdiff_t count,
 	ptrdiff_t avail   = a->end - a->beg;
 	ptrdiff_t padding = -(uintptr_t)a->beg & (align - 1);
 	if (count > (avail - padding) / size) {
-		__builtin_longjmp(a->jmp_buf, 1);
+		longjmp(*((jmp_buf*)a->jmp_buf), 1);
 	}
 
 	ptrdiff_t total = size * count;

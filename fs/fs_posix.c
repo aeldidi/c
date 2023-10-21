@@ -16,35 +16,21 @@ extern int errno;
 bool
 fs_foreach_file(char* dirname, bool (*fn)(char*))
 {
-	// printf("'%s'\n", dirname);
 	char* paths[] = {dirname, NULL};
-	FTS*  dir     = fts_open(paths, FTS_PHYSICAL | FTS_NOCHDIR, NULL);
+	FTS*  dir     = fts_open(
+			     paths, FTS_PHYSICAL | FTS_NOCHDIR | FTS_NOSTAT, NULL);
 	if (dir == NULL) {
-		perror("fts_open");
 		return false;
 	}
 
-	for (;;) {
-		errno           = 0;
-		FTSENT* current = fts_read(dir);
-		if (current == NULL) {
-			if (errno != 0) {
-				perror("fts_read");
-				return false;
+	while (fts_read(dir) != NULL) {
+		FTSENT* current = fts_children(dir, 0);
+		for (; current != NULL; current = current->fts_link) {
+			if ((current->fts_info & FTS_F) == 0) {
+				continue;
 			}
 
-			// we're done.
-			break;
-		}
-
-		if (current->fts_info & FTS_F) {
 			fn(current->fts_name);
-		} else if (current->fts_info & FTS_D) {
-			// TODO
-		} else if (current->fts_info & FTS_DP) {
-			// TODO
-		} else {
-			// TODO
 		}
 	}
 

@@ -1,4 +1,5 @@
 #include <inttypes.h>
+#include <setjmp.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -21,7 +22,7 @@ static char** _argv;
 static char*  _dir;
 
 bool
-foreach_file_fn(char* file)
+find_command_to_run(char* file)
 {
 	if (strlen(file) <= 1 || file[0] != 'c') {
 		return true;
@@ -38,15 +39,22 @@ foreach_file_fn(char* file)
 	exit(EXIT_FAILURE);
 }
 
+static bool
+list_all_commands(char* file)
+{
+	if (strlen(file) <= 1 || file[0] != 'c') {
+		return true;
+	}
+
+	printf("\t%s\n", file + 1);
+	return true;
+}
+
+// The main `c` tool. This just runs the other tools from the configured
+// `C_ROOT` directory.
 int
 main(int argc, char** argv)
 {
-	// TODO: actual argument parsing
-	if (argc < 2) {
-		puts("TODO: usage");
-		return EXIT_SUCCESS;
-	}
-
 	_argc   = argc;
 	_argv   = argv;
 	command = argv[1];
@@ -56,17 +64,25 @@ main(int argc, char** argv)
 		C_ROOT = "/c";
 	}
 
-	void* jmp_buf[5];
-	if (__builtin_setjmp(jmp_buf)) {
+	jmp_buf jb;
+	if (setjmp(jb)) {
 		// allocation error
 		fprintf(stderr, "error: out of memory\n");
 		return EXIT_FAILURE;
 	}
-	mem.jmp_buf = jmp_buf;
+	mem.jmp_buf = &jb;
+	char* dir   = str_format(&mem, "%s/commands", C_ROOT);
+	_dir        = dir;
 
-	char* dir = str_format(&mem, "%s/commands", C_ROOT);
-	_dir      = dir;
-	if (!fs_foreach_file(dir, foreach_file_fn)) {
+	if (argc < 2) {
+		puts("usage: c <command> [arguments]\n\nAvailible "
+		     "commands:\n");
+		fs_foreach_file(dir, list_all_commands);
+		printf("\n");
+		return EXIT_SUCCESS;
+	}
+
+	if (!fs_foreach_file(dir, find_command_to_run)) {
 		fprintf(stderr, "error: couldn't read directory\n");
 		return EXIT_FAILURE;
 	}

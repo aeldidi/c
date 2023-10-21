@@ -25,9 +25,9 @@
 #define ARENA_NOZERO (1 << 0) // disables initializing memory to 0
 
 typedef struct Arena {
-	char*  beg;
-	char*  end;
-	void** jmp_buf;
+	char* beg;
+	char* end;
+	void* jmp_buf;
 } Arena;
 
 // arena_alloc allocates memory inside the given [[Arena]]. You can specify

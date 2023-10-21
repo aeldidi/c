@@ -1,8 +1,6 @@
 
-#if defined(__linux__)
+#if defined(__linux__) || defined(__APPLE__)
 #include "./fs_posix.c"
 #elif defined(_WIN32)
-#error "TODO"
-#elif defined(__APPLE__)
 #error "TODO"
 #endif

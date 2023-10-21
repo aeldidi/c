@@ -20,5 +20,5 @@ process_exec(Arena* temp, int argc, char* argv[])
 	// 	printf("%s ", argv[i]);
 	// }
 	// puts("");
-	execv(exec_argv[0], exec_argv);
+	execvp(exec_argv[0], exec_argv);
 }
