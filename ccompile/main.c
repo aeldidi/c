@@ -2,8 +2,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include "c.eldidi.org/c/arena"
-#include "c.eldidi.org/c/process"
+#include "c.eldidi.org/x/arena"
+#include "c.eldidi.org/x/process"
 
 char  memory[1 << 16];
 Arena mem = {

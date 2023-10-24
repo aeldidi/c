@@ -4,9 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "c.eldidi.org/c/arena"
-#include "c.eldidi.org/c/fs"
-#include "c.eldidi.org/c/str"
+#include "c.eldidi.org/x/arena"
+#include "c.eldidi.org/x/fs"
+#include "c.eldidi.org/x/str"
 
 char  memory[1 << 16];
 Arena mem = {

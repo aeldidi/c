@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "c.eldidi.org/c/util"
 #include "c.eldidi.org/x/arena"
 #include "c.eldidi.org/x/fs"
 #include "c.eldidi.org/x/process"
@@ -39,7 +38,7 @@ find_command_to_run(char* file, void* arg)
 		return true;
 	}
 
-	fp->argv[1] = str_format(fp->mem, "%s/%s", fp->dir, file);
+	fp->argv[1] = str_format(&fp->mem, "%s/%s", fp->dir, file);
 	process_exec(&mem, fp->argc - 1, fp->argv + 1);
 	fprintf(stderr, "error: exec failed\n");
 	exit(EXIT_FAILURE);
@@ -83,8 +82,6 @@ main(int argc, char** argv)
 	mem.jmp_buf = &jb;
 	char* dir   = str_format(&mem, "%s/commands", C_ROOT);
 	fp.dir      = dir;
-
-	panic(&mem, "test");
 
 	if (argc < 2) {
 		puts("usage: c <command> [arguments]\n\nAvailible "
