@@ -3,32 +3,15 @@ allows for managing C codebases.
 
 Planned commands:
 
-- `build`: build C projects which abide by the following structure:
+- `build`: build C projects which abide by a specific structure.
+
+  See `doc/cbuild.md` for details.
   
-  1. All code is in the `src/` subdirectory, and all non-system includes are
-     relative to `src/`.
-
-     System includes are ones enclosed in angle brackets, and are relative to
-     some system-defined search directory.
-
-     All `#include`s using quotation marks are relative to `src/`.
-
-     There will be a way to define which flags should be passed to the compiler
-     for different system headers if necessary (`-lm` for math, etc).
-
-  2. All subdirectories of `src/` are libraries, except for those in `src/cmd`,
-     which are binaries.
-
-  3.`#include`s are scanned in all `.c` and `.h` files to determine
-    dependencies between libraries and binaries.
-
 - `fmt`: formats C code automatically. Whatever style I end up defining this to
   format will essentially be the "canonical" format for code using this tool.
 
 - `doc`: generates HTML documentation from C code and (optionally) opens the
   web browser to the output folder.
-
-- `clean`: removes all artifacts left behind by these commands.
 
 - `run`: compiles and runs the specified program.
 
@@ -36,6 +19,9 @@ Planned commands:
 
 - `test`: Compiles and runs tests, but I don't know exactly how we'll do that
   for now.
+
+  See [my encoding project](https://github.com/aeldidi/encoding) for an idea of
+  what I'm thinking of.
 
 - `tool`: Compiles and runs a tool from the `tools/` subdirectory of the
   project.
@@ -59,6 +45,8 @@ Planned commands:
 
   On my home computer.
 
-All this will eventually mean we write a C parser, but for now I'll use basic
-string searching to find includes and implement `build` (which means it won't
-work on all C codebases, including things with conditional includes).
+License
+-------
+
+Public Domain or 0-Clause BSD. The 0BSD license is included in the `LICENSE`
+file in the repository's root.
