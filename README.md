@@ -23,6 +23,17 @@ Planned commands:
   See [my encoding project](https://github.com/aeldidi/encoding) for an idea of
   what I'm thinking of.
 
+- `export`: Generates amalgamations for every module, then generates a
+  `meson.build` compatible-project which builds everything, converting module
+  imports to subprojects (with wraps if needed).
+
+  After this process is done, it should be possible to either use a
+  `meson`-compatible build system to build your library or excutable on any
+  supported OS.
+
+  This is what you would put up for download as a "release", so no one needs
+  this tool to build from source or make use of your library.
+
 - `tool`: Compiles and runs a tool from the `tools/` subdirectory of the
   project.
 
