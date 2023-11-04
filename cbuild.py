@@ -101,8 +101,11 @@ class Module:
     def h(self) -> pathlib.Path:
         """Generates a __module.h file for self."""
         implicit = C_CACHE_DIR / self.import_path / "__module.h"
+        if implicit.exists():
+            return implicit.resolve()
+
         implicit_include = ""
-        for header in self.path.glob("*.h"):
+        for header in (C_CACHE_DIR / self.import_path).glob("*.h"):
             if header == implicit:
                 continue
             implicit_include += f'#include "{header.resolve()}"\n'
@@ -133,7 +136,10 @@ class Module:
     def resolve_import(self, import_path: str) -> "Module":
         """Resolves an import in the context of building self."""
 
-        if import_path.startswith(self.import_path):
+        self_modname = self.import_path
+        if self.parent is not None:
+            self_modname = self.parent.import_path
+        if import_path.startswith(self_modname):
             # It is a submodule
             root = self
             if self.is_submodule():
@@ -198,7 +204,6 @@ class Module:
                 # If we've reached first part of the module name and still
                 # haven't found anything, it must not exist.
                 if len(modsplit) == 1:
-                    print(git.stderr.decode("utf-8"), file=sys.stderr)
                     error(f"no module with name {import_path}")
 
                 currentmod = "/".join(modsplit[:-1])
@@ -249,7 +254,7 @@ class Module:
             return result
 
         # we imported a submodule
-        submodname = import_path.lstrip(currentmod)
+        submodname = import_path[len(currentmod) + 1 :]
         if submodname not in result.submodules:
             error(
                 f"module '{currentmod}' has no submodule '{submodname}'"
@@ -300,7 +305,7 @@ class Module:
                 mod.dependencies.extend(imported_mod.dependencies)
                 lines[
                     i
-                ] = f'#include "{(C_CACHE_DIR /imported_mod.import_path /"__module.h").resolve()}"'
+                ] = f'#include "{(C_CACHE_DIR / imported_mod.import_path /"__module.h").resolve()}"'
 
             # if the file is not local to the project, it will be in the cache
             # directory, and we should refer to it by its module path, not file
