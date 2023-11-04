@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import itertools
 import urllib.request
+import copy
 import os
 import sys
 import pathlib
@@ -7,11 +9,14 @@ import argparse
 import subprocess
 import shutil
 import platform
-from typing import Literal
+from dataclasses import dataclass, field
+from typing import Literal, Optional
 
 # A python implementation of the `cbuild` command. Used for bootstrapping this
 # repository, but also kept up to date with the C implementation.
 
+# TODO: when using Module.from_directory, copy every preprocessed file into the
+#       cache folder, and return the path to that in Module.h().
 # TODO: make the C implementation.
 # TODO: actually make sure things need to be rebuilt
 
@@ -23,6 +28,15 @@ C_CLANG_COMMAND: pathlib.Path = os.environ.get("CLANG_COMMAND", "clang")
 if C_CACHE_DIR.exists():
     shutil.rmtree(C_CACHE_DIR)
 C_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+args: argparse.Namespace
+
+
+def get_os() -> str:
+    result = platform.system().lower()
+    if result == "darwin":
+        return "macos"
+
+    return result
 
 
 def todo(thing: str):
@@ -35,376 +49,468 @@ def error(msg: str):
     exit(1)
 
 
-def gen_module_h(modpath: pathlib.Path, modname: str, submodule: str) -> pathlib.Path:
-    implicit = C_CACHE_DIR / (modname + "/" + submodule) / "__module.h"
-    implicit_include = ""
-    for header in (modpath / submodule).glob("*.h"):
-        if header == implicit:
-            continue
-        implicit_include += f'#include "{header.resolve()}"\n'
-    implicit_include += "\n"
+@dataclass
+class Module:
+    """Module contains all the information associated with a C source module."""
 
-    # put file in cache
-    implicit.write_text(implicit_include)
+    std: str
+    has_executable: bool
+    has_lib: bool
+    # The path containing the sources for the module.
+    # The preprocessed sources always go in C_CACHE_DIR / self.import_path
+    path: pathlib.Path
+    import_path: str
+    # A list of the names of each submodule.
+    submodules: list[str]
+    platform_flags: dict[str, list[str]]
+    parent: Optional["Module"] = None
+    dependencies: list["Module"] = field(default_factory=list)
 
-    return implicit
+    def get_submodule(self, name: str) -> Optional["Module"]:
+        assert name in self.submodules
+        result = copy.copy(self)
+        result.parent = self
+        result.submodules = []
+        result.path /= name
+        result.import_path += "/" + name
+        result.has_executable = (result.path / "main.c").exists()
+        result.has_lib = (result.path / "lib.c").exists() or (
+            result.path / (name + ".c")
+        ).exists()
+        return result
 
-
-def download_module(mod: str, args: argparse.Namespace):
-    if (C_CACHE_DIR / mod).exists():
-        currentmod = mod
-        path = C_CACHE_DIR / mod
-        while True:
-            if (path / "c.mod").exists():
-                break
-
-            currentmod = "/".join(currentmod.rsplit("/", maxsplit=1)[:-1])
-            path = path.parent
-        cmod = C_CACHE_DIR / currentmod / "c.mod"
-        if not cmod.exists():
-            error("downloaded repository is not a cbuild project (no c.mod file found)")
-        _, std, deps = parse_cmod(cmod)
-
-        return mod, mod[len(currentmod) + 1 :], std, deps
-
-    print(f"downloading module {mod}...")
-    currentmod = mod
-
-    git = None
-    if args.verbose:
-        print(str(C_CACHE_DIR / currentmod))
-    (C_CACHE_DIR / currentmod).mkdir(parents=True)
-    while True:
-        url = "https://" + currentmod
-        try:
-            with urllib.request.urlopen("https://" + currentmod, timeout=1) as resp:
-                url = resp.url
-        except Exception as _:
-            modsplit = currentmod.rsplit("/", maxsplit=1)
-            if len(modsplit) == 1:
-                print(git.stderr.decode("utf-8"), file=sys.stderr)
-                error(f"no module with name {mod}")
-
-            currentmod = "/".join(modsplit[:-1])
-            continue
-        argv = [
-            "git",
-            "-C",
-            str((C_CACHE_DIR / currentmod).resolve()),
-            "init",
-        ]
-        if args.verbose:
-            print(" ".join(map(str, argv)))
-        git = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        assert git.returncode == 0
-
-        argv = [
-            "git",
-            "-C",
-            str((C_CACHE_DIR / currentmod).resolve()),
-            "remote",
-            "add",
-            "origin",
-            url,
-        ]
-        if args.verbose:
-            print(" ".join(map(str, argv)))
-        git = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        assert git.returncode == 0
-
-        argv = [
-            "git",
-            "-C",
-            str((C_CACHE_DIR / currentmod).resolve()),
-            "fetch",
-            "--depth=1",
-        ]
-        if args.verbose:
-            print(" ".join(map(str, argv)))
-        git = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if git.returncode != 0:
-            continue
-
-        argv = [
-            "git",
-            "-C",
-            str((C_CACHE_DIR / currentmod).resolve()),
-            "checkout",
-            "main",
-        ]
-        if args.verbose:
-            print(" ".join(map(str, argv)))
-        git = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if git.returncode == 0:
-            break
-
-        modsplit = currentmod.rsplit("/", maxsplit=1)
-        if len(modsplit) == 1:
-            print(git.stderr.decode("utf-8"), file=sys.stderr)
-            error(f"no module with name {mod}")
-
-        currentmod = "/".join(modsplit[:-1])
-
-    cmod = C_CACHE_DIR / currentmod / "c.mod"
-    if not cmod.exists():
-        error("downloaded repository is not a cbuild project (no c.mod file found)")
-    _, std, deps = parse_cmod(cmod)
-
-    return mod, mod[len(currentmod) + 1 :], std, deps
-
-
-def fix_includes(
-    modpath: pathlib.Path,
-    modname: str,
-    submodule: str,
-    moddir: pathlib.Path,
-    std: str,
-    args: argparse.Namespace,
-    mod_deps: list[str],
-) -> list[str]:
-    if args.verbose:
-        print(
-            f"fix_includes({modpath}, {modname}, {submodule}, {moddir}, {std}, {args}, {mod_deps})"
+    def lib_c(self) -> pathlib.Path:
+        """Returns the module's library main file if it exists."""
+        assert self.has_lib
+        libc = C_CACHE_DIR / self.import_path / "lib.c"
+        modc = C_CACHE_DIR / self.import_path / (self.module_name() + ".c")
+        assert any([libc.exists(), modc.exists()]) and not all(
+            [libc.exists(), modc.exists()]
         )
-    deps = []
-    for file in (modpath / submodule).glob("*.c"):
-        lines = file.read_text(encoding="utf-8").splitlines()
-        for i in range(len(lines)):
-            line = lines[i].strip().split()
-            if len(line) == 0:
-                continue
 
-            if line[0] != "#include":
-                continue
+        if libc.exists():
+            return libc.resolve()
 
-            # is it a system include?
-            if line[1].startswith("<"):
-                continue
+        return modc.resolve()
 
-            # its not
-            include = line[1].strip('"')
-            if include.startswith("./") or include.startswith("../"):
-                continue
+    def main_c(self) -> pathlib.Path:
+        """Returns the module's main.c file if it exists."""
+        assert self.has_executable
+        return C_CACHE_DIR / self.import_path / "main.c"
 
-            if include.startswith(str(C_CACHE_DIR.resolve())):
+    def h(self) -> pathlib.Path:
+        """Generates a __module.h file for self."""
+        implicit = C_CACHE_DIR / self.import_path / "__module.h"
+        implicit_include = ""
+        for header in self.path.glob("*.h"):
+            if header == implicit:
                 continue
+            implicit_include += f'#include "{header.resolve()}"\n'
+        implicit_include += "\n"
 
-            incname = ""
-            if not include.startswith(modname):
-                submodname, subname, std, mod_deps = download_module(include, args)
-                path = C_CACHE_DIR / submodname
-                lib, h = build(path, submodname, "", std, "lib", args, mod_deps)
-                deps.extend([lib, h])
-                incname = subname
-                lines[i] = f'#include "{(path  /"__module.h").resolve()}"'
-                continue
+        # put file in cache
+        implicit.write_text(implicit_include)
+        return implicit.resolve()
 
-            # is it a submodule?
-            incname = include[len(modname) + 1 :]
-            # TODO: check if this is an infinite loop. We don't allow
-            # including ourself.
-            if modname + "/" + incname == modname + "/" + submodule:
+    def module_name(self) -> str:
+        return self.import_path.split("/")[-1]
+
+    def lib(self) -> Optional[pathlib.Path]:
+        if not self.has_lib:
+            return None
+
+        return C_CACHE_DIR / self.import_path / "lib.o"
+
+    def exe(self) -> Optional[pathlib.Path]:
+        if not self.has_executable:
+            return None
+
+        return C_CACHE_DIR / self.import_path / self.module_name()
+
+    def is_submodule(self) -> bool:
+        return self.parent is not None
+
+    def resolve_import(self, import_path: str) -> "Module":
+        """Resolves an import in the context of building self."""
+
+        if import_path.startswith(self.import_path):
+            # It is a submodule
+            root = self
+            if self.is_submodule():
+                root = self.parent
+
+            modname = import_path.split("/")[-1]
+            if modname not in root.submodules:
                 error(
-                    f"file {file.resolve()} includes "
-                    + f'"{modname + "/" + incname}", which causes a circular '
-                    + "dependency"
+                    f"module '{root.import_path}' does not have a "
+                    + f"submodule '{modname}'"
                 )
 
-            if (
-                not (C_CACHE_DIR / modname / incname / "lib.o").exists()
-                and pathlib.Path(incname).exists()
-            ):
-                # print(f"adding dependency {modname}/{incname}")
-                build(modpath, modname, incname, std, "lib", args, mod_deps)
-            lootdir = C_CACHE_DIR / modname / incname
-            deps.extend(
-                [
-                    str((lootdir / "lib.o").resolve()),
-                    f'--include={(lootdir / "__module.h").resolve()}',
-                ]
+            return root.get_submodule(modname)
+
+        # If it already was fetched, we're done.
+        # NOTE: This is only the case because we're not actually caching
+        #       anything. This only checks if we've already downloaded it
+        #       during the current build, not if it was here from a previous
+        #       build.
+        if (C_CACHE_DIR / import_path).exists():
+            moddir = C_CACHE_DIR / import_path
+            if (moddir / "c.mod").exists():
+                return Module.from_directory(
+                    C_CACHE_DIR / import_path, preprocess=False
+                )
+
+            submod = import_path.split("/")[-1]
+            return Module.from_directory(moddir.parent, preprocess=False).get_submodule(
+                submod
             )
-            lines[
-                i
-            ] = f'#include "{(C_CACHE_DIR / modname / incname /"__module.h").resolve()}"'
 
-            # lines[i] = f'#include "{(moddir / incname /"__module.h").resolve()}"'
-            # deps += [str((moddir / incname / "lib.o").resolve())]
+        # It is a remote module
+        print(f"downloading module {import_path}...")
 
-        # if the file is not local to the project, it will be in the cache
-        # directory, and we should refer to it by its module path, not file
-        # path.
-        name = str(pathlib.Path(modname) / submodule / file.relative_to(modpath))
-        lines.insert(0, f'#line 1 "{name}"')
-        lines = "\n".join(lines)
-        # put preprocessed file in cache
+        # First create the path where it will go
+        (C_CACHE_DIR / import_path).mkdir(parents=True, exist_ok=True)
+
+        # Convenience function to call git for us
+        def git(*git_argv) -> subprocess.CompletedProcess[bytes]:
+            argv = [
+                "git",
+                "-C",
+                str((C_CACHE_DIR / currentmod).resolve()),
+            ]
+            argv.extend(git_argv)
+            if args.verbose:
+                print(" ".join(map(str, argv)))
+            return subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        assert import_path[-1] != "/", "sanitize trailing slashes from import paths"
+        currentmod = import_path
+        while True:
+            # Resolve any redirects to get the actual repository name (required
+            # when trying to access github hosted repositories begind a
+            # redirect, which is the case for many of my c.eldidi.org modules).
+            url = "https://" + currentmod
+            try:
+                with urllib.request.urlopen("https://" + currentmod, timeout=1) as resp:
+                    url = resp.url
+            except Exception as _:
+                modsplit = currentmod.rsplit("/", maxsplit=1)
+                # If we've reached first part of the module name and still
+                # haven't found anything, it must not exist.
+                if len(modsplit) == 1:
+                    print(git.stderr.decode("utf-8"), file=sys.stderr)
+                    error(f"no module with name {import_path}")
+
+                currentmod = "/".join(modsplit[:-1])
+                continue
+
+            break
+
         if args.verbose:
-            print(f"writing include {C_CACHE_DIR / modname / submodule / file.name}")
-        (C_CACHE_DIR / modname / submodule / file.name).write_text(lines)
+            print(str(C_CACHE_DIR / currentmod))
 
-    # print(deps)
-    return deps
+        # TODO: see if this is necessary
+        # We do `git init; git remote add url git fetch; git checkout;`
+        # instead of `git clone folder url` in case the folder is not
+        # empty, which git doesn't allow.
+        ret = git("init")
+        assert ret.returncode == 0
+
+        ret = git("remote", "add", "origin", url)
+        assert ret.returncode == 0
+
+        ret = git("fetch", "--depth=1")
+        if ret.returncode != 0:
+            print(ret.stderr.decode("utf-8"), file=sys.stderr)
+            error(
+                f"failed to fetch module '{import_path}' (imported by "
+                + f"'{self.import_path}')"
+            )
+
+        ret = git("checkout", "main")
+        if ret.returncode != 0:
+            print(ret.stderr.decode("utf-8"), file=sys.stderr)
+            error(
+                f"failed to fetch module '{import_path}' (imported by "
+                + f"'{self.import_path}')"
+            )
+
+        moddir = C_CACHE_DIR / currentmod
+        cmod = moddir / "c.mod"
+        if not cmod.exists():
+            error(
+                "downloaded repository is not a cbuild project (no c.mod "
+                + "file found)"
+            )
+
+        result = Module.from_directory(moddir)
+        if currentmod == import_path:
+            # we imported the root module
+            return result
+
+        # we imported a submodule
+        submodname = import_path.lstrip(currentmod)
+        if submodname not in result.submodules:
+            error(
+                f"module '{currentmod}' has no submodule '{submodname}'"
+                + f"(imported by {self.import_path})"
+            )
+
+        return result.get_submodule(submodname)
+
+    @staticmethod
+    def _preprocess_dir(mod: "Module"):
+        if args.verbose:
+            print(f"preprocessing module '{mod.import_path}'")
+        for file in itertools.chain(mod.path.glob("*.c"), mod.path.glob("*.h")):
+            if file.is_dir():
+                continue
+            if file.name == "c.mod":
+                continue
+
+            lines = file.read_text(encoding="utf-8").splitlines()
+            for i in range(len(lines)):
+                line = lines[i].strip().split()
+                if len(line) == 0:
+                    continue
+
+                if line[0] != "#include":
+                    continue
+
+                # is it a system include?
+                if line[1].startswith("<"):
+                    continue
+
+                include = line[1].strip('"')
+                if include.startswith("./") or include.startswith("../"):
+                    continue
+
+                # TODO: I don't know if this is necessary
+                # if include.startswith(str(C_CACHE_DIR.resolve())):
+                #     continue
+
+                imported_mod = mod.resolve_import(include)
+                if imported_mod.import_path == mod.import_path:
+                    error(
+                        f"module '{mod.import_path}' includes itself, "
+                        + "which is not allowed."
+                    )
+
+                mod.dependencies.append(imported_mod)
+                mod.dependencies.extend(imported_mod.dependencies)
+                lines[
+                    i
+                ] = f'#include "{(C_CACHE_DIR /imported_mod.import_path /"__module.h").resolve()}"'
+
+            # if the file is not local to the project, it will be in the cache
+            # directory, and we should refer to it by its module path, not file
+            # path.
+            name = str(pathlib.Path(mod.import_path) / file.relative_to(mod.path))
+            lines.insert(0, f'#line 1 "{name}"')
+            lines = "\n".join(lines)
+            # put preprocessed file in cache
+            out = C_CACHE_DIR / mod.import_path
+            if args.verbose:
+                print(f"writing include {out / file.name}")
+            out.mkdir(exist_ok=True, parents=True)
+            (out / file.name).write_text(lines)
+
+    def _preprocess(self):
+        """_preprocess preprocesses self so it can be built."""
+        Module._preprocess_dir(self)
+
+        for submod in self.submodules:
+            Module._preprocess_dir(self.get_submodule(submod))
+
+    @staticmethod
+    def from_directory(path: pathlib.Path, preprocess: bool = True) -> "Module":
+        """Returns a module given a directory with a c.mod file."""
+        # parse c.mod file
+        # result = Module()
+        cmod_file = path / "c.mod"
+        if not cmod_file.exists():
+            path = path.parent
+            cmod_file = path / "c.mod"
+
+        assert cmod_file.exists(), (
+            "Module.from_directory must only be called with a directory "
+            + "containing a c.mod file or its subdirectory"
+        )
+
+        import_path = None
+        name = ""
+        std = None
+        platform_flags = {}
+        with cmod_file.open(encoding="utf-8") as cmod:
+            for line in cmod.readlines():
+                line = line.split()
+                if len(line) == 0:
+                    continue
+                if len(line) < 2:
+                    error("c.mod: syntax error")
+                if line[0] == "module":
+                    if len(line) != 2:
+                        error("c.mod: syntax error")
+                    if import_path is not None:
+                        error("c.mod: only one module directive may be specified")
+                    import_path = line[1].strip()
+                    name = import_path.split("/")[-1]
+                    continue
+                elif line[0] == "version":
+                    if len(line) != 2:
+                        error("c.mod: syntax error")
+                    if std is not None:
+                        error("c.mod: only one version directive may be specified")
+                    std = line[1].strip()
+                    continue
+                elif line[0] == "os":
+                    deps = []
+                    os = platform.system().lower()
+                    if os == "darwin":
+                        os = "macos"
+                    if os == line[1]:
+                        deps += line[2:]
+
+                    platform_flags[os] = deps
+                    continue
+
+                error(f"c.mod: unrecognized directive: {line[0]}")
+
+        has_exe = (path / "main.c").exists()
+        has_lib = (path / "lib.c").exists() or (path / (name + ".c")).exists()
+        if (path / "lib.c").exists():
+            has_lib = True
+        if (path / "lib.c").exists() and (path / (name + ".c")).exists():
+            error(
+                f"{import_path}: a module can only have 1 library main "
+                + "file: either lib.c or a file of the same name as the module"
+            )
+
+        submodules = []
+        for child in path.glob("*"):
+            if not child.is_dir():
+                continue
+
+            if not (
+                (child / "main.c").exists()
+                or (child / "lib.c").exists()
+                or (child / (child.name + ".c")).exists()
+            ):
+                continue
+
+            if (child / "lib.c").exists() and (child / (child.name + ".c")).exists():
+                error(
+                    f"{import_path}: a module can only have 1 "
+                    + "library main file: either lib.c or a file of the same "
+                    + "name as the module"
+                )
+
+            submodules.append(child.name)
+        result = Module(
+            std=std,
+            has_executable=has_exe,
+            has_lib=has_lib,
+            path=path,
+            import_path=import_path,
+            submodules=submodules,
+            platform_flags=platform_flags,
+        )
+
+        if preprocess:
+            result._preprocess()
+        return result
 
 
-def build(
-    modpath: pathlib.Path,
-    modname: str,
-    submodule: str,
-    std: str,
-    type: Literal["exe", "lib"],
-    args: argparse.Namespace,
-    mod_deps: list[str],
-) -> tuple[list[str], list[str]]:
+def build(mod: Module, type: Literal["exe", "lib"]):
     if args.verbose:
-        print(
-            f"build({modpath}, {modname}, {submodule}, {std}, {type}, {args}, {mod_deps})"
-        )
-    moddir = C_CACHE_DIR / modname / submodule
-    moddir.mkdir(parents=True, exist_ok=True)
+        print(f'building module "{mod.import_path}" as {type}')
 
-    outname = "lib.o"
+    out = C_CACHE_DIR / mod.import_path
+    if mod.is_submodule():
+        out = C_CACHE_DIR / mod.parent.import_path / mod.module_name()
+
+    out.mkdir(parents=True, exist_ok=True)
+
     if type == "exe":
-        outname = "main"
-        if submodule != "":
-            outname = submodule
-        else:
-            if "/" in modname:
-                outname = modname.rsplit("/", maxsplit=1)[-1]
+        outname = mod.module_name()
+    else:
+        outname = "lib.o"
 
-    # generate __module.h
-    module_h = gen_module_h(modpath, modname, submodule)
-
-    # fix includes
-    deps = fix_includes(modpath, modname, submodule, moddir, std, args, mod_deps)
-
-    if submodule != "" and (
-        (moddir / "lib.c").exists() and (moddir / (moddir.name + ".c")).exists()
-    ):
-        error(
-            f"{modname}/{submodule}: "
-            + "a module can only have 1 library main file: either lib.c or a "
-            + "file of the same name as the module"
-        )
-
-    libfile = ""
-    if (moddir / "lib.c").exists():
+    if type == "exe":
+        libfile = "main.c"
+    elif (mod.path / "lib.c").exists():
         libfile = "lib.c"
     else:
-        libfile = moddir.name + ".c"
+        libfile = mod.module_name() + ".c"
 
-    # run clang
-    argv = [C_CLANG_COMMAND]
-    if type == "exe":
-        argv.extend(
-            [
-                "-o",
-                str((moddir / outname).resolve()),
-                f"-std={std}",
-                f"--include={module_h.resolve()}",
-                # TODO: gatekeep behind debug flag or release flag
-                "-fsanitize=address,undefined",
-                "-g3",
-                # f"-I{C_CACHE_DIR}",
-                # "-I.",
-                str((moddir / "main.c").resolve()),
-            ]
-        )
-        argv.extend(deps)
-        argv.extend(mod_deps)
-    else:
-        argv.extend(
-            [
-                "-o",
-                str((moddir / "lib.o").resolve()),
-                f"-std={std}",
-                f"--include={module_h.resolve()}",
-                # TODO: gatekeep behind debug flag or release flag
-                "-fsanitize=address,undefined",
-                "-g3",
-                # f"-I{C_CACHE_DIR}",
-                # "-I.",
-                "-xc",
-                "-c",
-                str((moddir / libfile).resolve()),
-            ]
-        )
-        argv.extend(mod_deps)
+    # TODO: This doesn't work since we can specify different platform_flags for
+    #       each library!
+    headers = []
+    sources = []
+    flags = []
+    for dep in mod.dependencies:
+        headers.append(f"--include={dep.h()}")
+        sources.append(dep.lib_c())
+        flags.extend(dep.platform_flags.get(get_os(), []))
+
+    # assemble compile command
+    argv = [
+        C_CLANG_COMMAND,
+        "-o",
+        str((out / outname).resolve()),
+        f"-std={mod.std}",
+        f"--include={mod.h()}",
+        # TODO: remove if release flag is present.
+        "-fsanitize=address,undefined",
+        "-g3",
+    ]
+    if type == "lib":
+        argv.append("-c")
+    moddir = C_CACHE_DIR / mod.import_path
+    argv.append(str((moddir / libfile).resolve()))
+    argv.extend(headers)
+    argv.extend(sources)
+
+    # remove duplicates
+    argv = list(dict.fromkeys(argv))
 
     if args.verbose:
-        print(f"building module {modname}/{submodule} with -std={std} as {type}")
-
-    if args.verbose:
-        print(" ".join(argv))
+        print(f"building module {mod.import_path} with -std={mod.std} as {type}")
+        print(" ".join(map(str, argv)))
     clang = subprocess.run(argv)
     if clang.returncode != 0:
         exit(clang.returncode)
 
     if type == "exe":
-        shutil.copy(moddir / outname, pathlib.Path(submodule))
-
-    return (moddir / "lib.o").resolve(), f"--include={module_h.resolve()}"
+        shutil.copy(out / outname, pathlib.Path("."))
 
 
-def parse_cmod(path: pathlib.Path) -> tuple[str, str, list[str]]:
-    # parse c.mod file
-    deps = []
-    modname = None
-    std = None
-    with path.open(encoding="utf-8") as cmod:
-        for line in cmod.readlines():
-            line = line.split()
-            if len(line) == 0:
-                continue
-            if len(line) < 2:
-                error("c.mod: syntax error")
-            if line[0] == "module":
-                if len(line) != 2:
-                    error("c.mod: syntax error")
-                if modname is not None:
-                    error("c.mod: only one module directive may be specified")
-                modname = line[1].strip()
-                continue
-            elif line[0] == "version":
-                if len(line) != 2:
-                    error("c.mod: syntax error")
-                if std is not None:
-                    error("c.mod: only one version directive may be specified")
-                std = line[1].strip()
-                continue
-            elif line[0] == "os":
-                os = platform.system().lower()
-                if os == "darwin":
-                    os = "macos"
-                if os == line[1]:
-                    deps += line[2:]
-                continue
-
-            error(f"c.mod: unrecognized directive: {line[0]}")
-
-    return modname, std, deps
-
-
-def main(args: argparse.Namespace):
+def main():
     cmod = pathlib.Path("c.mod")
     if not cmod.exists():
         error("current folder is not a module")
 
-    modname, std, flags = parse_cmod(cmod)
-
+    root = Module.from_directory(pathlib.Path("."))
     if len(args.modules) != 0:
         for module in args.modules:
-            path = pathlib.Path(module)
-            if (path / "lib.c").exists() or (path / (module + ".c")).exists():
-                build(pathlib.Path("."), modname, module, std, "lib", args, flags)
-            elif (path / "main.c").exists():
-                build(pathlib.Path("."), modname, module, std, "exe", args, flags)
-            else:
-                error(f"submodule '{module} has neither a main.c file or lib.c file'")
+            if module == ".":
+                if not root.has_executable:
+                    error(f"no executable to build for module '{module}'")
+                build(root, "exe")
+                return
+
+            if module not in root.submodules:
+                error(f"no submodule named '{module}' exists")
+
+            mod = root.get_submodule(module)
+            if not mod.has_executable:
+                error(f"no executable to build for module '{module}'")
+            build(root.get_submodule(module), "exe")
         return
 
-    if pathlib.Path("lib.c").exists():
-        build(pathlib.Path("."), modname, "", std, "lib", args, flags)
-    if pathlib.Path("main.c").exists():
-        build(pathlib.Path("."), modname, "", std, "exe", args, flags)
+    if not root.has_executable:
+        error(f"no executable to build for module '{module}'")
+    build(root, "exe")
 
 
 if __name__ == "__main__":
@@ -421,4 +527,4 @@ if __name__ == "__main__":
         "-v", "--verbose", action="store_true", help="enables verbose output."
     )
     args = argparser.parse_args()
-    main(args)
+    main()
