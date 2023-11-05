@@ -502,7 +502,7 @@ def build(mod: Module, type: Literal["exe", "lib"]):
         exit(clang.returncode)
 
     if type == "exe":
-        shutil.copy(out / outname, pathlib.Path("."))
+        shutil.copy(out / outname, mod.path)
 
 
 def main():
