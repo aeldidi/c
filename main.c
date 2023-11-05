@@ -12,14 +12,9 @@
 #include "c.eldidi.org/x/process"
 #include "c.eldidi.org/x/str"
 
-static uint8_t memory[1 << 16];
-static Arena   mem = {
-		  .beg = (void*)memory,
-		  .end = (void*)memory + (1 << 16),
-};
-
 typedef struct FindParams {
 	Arena* mem;
+	Arena  scratch;
 	char*  command;
 	int    argc;
 	char** argv;
@@ -40,7 +35,7 @@ find_command_to_run(char* file, void* arg)
 	}
 
 	fp->argv[1] = str_format(fp->mem, "%s/%s", fp->dir, file);
-	process_exec(&mem, fp->argc - 1, fp->argv + 1);
+	process_exec(fp->mem, fp->scratch, fp->argc - 1, fp->argv + 1);
 	fprintf(stderr, "error: exec failed\n");
 	exit(EXIT_FAILURE);
 }
@@ -62,11 +57,33 @@ list_all_commands(char* file, void* arg)
 int
 main(int argc, char** argv)
 {
+	char*   memory         = malloc(1 << 16);
+	char*   memory_scratch = malloc(1 << 16);
+	jmp_buf jb;
+	if (memory == NULL || memory_scratch == NULL || setjmp(jb)) {
+		// allocation error
+		free(memory);
+		free(memory_scratch);
+		fprintf(stderr, "error: out of memory\n");
+		return EXIT_FAILURE;
+	}
+	Arena mem = {
+			.beg     = memory,
+			.end     = memory + (1 << 16),
+			.jmp_buf = jb,
+	};
+	Arena scratch = {
+			.beg     = memory_scratch,
+			.end     = memory_scratch + (1 << 16),
+			.jmp_buf = jb,
+	};
+
 	FindParams fp = {
 			.argc    = argc,
 			.argv    = argv,
 			.command = argv[1],
 			.mem     = &mem,
+			.scratch = scratch,
 	};
 
 	char* C_ROOT = getenv("C_ROOT");
@@ -74,17 +91,8 @@ main(int argc, char** argv)
 		C_ROOT = "/c";
 	}
 
-	jmp_buf jb;
-	if (setjmp(jb)) {
-		// allocation error
-		fprintf(stderr, "error: out of memory\n");
-		return EXIT_FAILURE;
-	}
-	mem.jmp_buf = &jb;
-	char* dir   = str_format(&mem, "%s/commands", C_ROOT);
-	fp.dir      = dir;
-
-	panic(&mem, "test");
+	char* dir = str_format(&mem, "%s/commands", C_ROOT);
+	fp.dir    = dir;
 
 	if (argc < 2) {
 		puts("usage: c <command> [arguments]\n\nAvailible "

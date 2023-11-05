@@ -15,8 +15,6 @@ from typing import Literal, Optional
 # A python implementation of the `cbuild` command. Used for bootstrapping this
 # repository, but also kept up to date with the C implementation.
 
-# TODO: when using Module.from_directory, copy every preprocessed file into the
-#       cache folder, and return the path to that in Module.h().
 # TODO: make the C implementation.
 # TODO: actually make sure things need to be rebuilt
 
@@ -25,9 +23,16 @@ C_CACHE_DIR: pathlib.Path = (
     pathlib.Path(os.environ.get("XDG_CACHE_HOME", DEFAULT_CACHE_DIR)) / "c"
 )
 C_CLANG_COMMAND: pathlib.Path = os.environ.get("CLANG_COMMAND", "clang")
-if C_CACHE_DIR.exists():
-    shutil.rmtree(C_CACHE_DIR)
+C_BUILD_CACHE_DIR = C_CACHE_DIR / "build"
+C_DOWNLOAD_DIR = C_CACHE_DIR / "pkg"
+if C_BUILD_CACHE_DIR.exists():
+    shutil.rmtree(C_BUILD_CACHE_DIR)
 C_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+C_DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+C_BUILD_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+# A in-memory cache of the module objects we've created, indexed by
+# import_path.
+MOD_CACHE = {}
 args: argparse.Namespace
 
 
@@ -57,7 +62,7 @@ class Module:
     has_executable: bool
     has_lib: bool
     # The path containing the sources for the module.
-    # The preprocessed sources always go in C_CACHE_DIR / self.import_path
+    # The preprocessed sources always go in C_BUILD_CACHE_DIR / self.import_path
     path: pathlib.Path
     import_path: str
     # A list of the names of each submodule.
@@ -77,13 +82,15 @@ class Module:
         result.has_lib = (result.path / "lib.c").exists() or (
             result.path / (name + ".c")
         ).exists()
+
+        MOD_CACHE[result.import_path] = result
         return result
 
     def lib_c(self) -> pathlib.Path:
         """Returns the module's library main file if it exists."""
         assert self.has_lib
-        libc = C_CACHE_DIR / self.import_path / "lib.c"
-        modc = C_CACHE_DIR / self.import_path / (self.module_name() + ".c")
+        libc = C_BUILD_CACHE_DIR / self.import_path / "lib.c"
+        modc = C_BUILD_CACHE_DIR / self.import_path / (self.module_name() + ".c")
         assert any([libc.exists(), modc.exists()]) and not all(
             [libc.exists(), modc.exists()]
         )
@@ -96,16 +103,16 @@ class Module:
     def main_c(self) -> pathlib.Path:
         """Returns the module's main.c file if it exists."""
         assert self.has_executable
-        return C_CACHE_DIR / self.import_path / "main.c"
+        return C_BUILD_CACHE_DIR / self.import_path / "main.c"
 
     def h(self) -> pathlib.Path:
         """Generates a __module.h file for self."""
-        implicit = C_CACHE_DIR / self.import_path / "__module.h"
+        implicit = C_BUILD_CACHE_DIR / self.import_path / "__module.h"
         if implicit.exists():
             return implicit.resolve()
 
         implicit_include = ""
-        for header in (C_CACHE_DIR / self.import_path).glob("*.h"):
+        for header in (C_BUILD_CACHE_DIR / self.import_path).glob("*.h"):
             if header == implicit:
                 continue
             implicit_include += f'#include "{header.resolve()}"\n'
@@ -122,13 +129,13 @@ class Module:
         if not self.has_lib:
             return None
 
-        return C_CACHE_DIR / self.import_path / "lib.o"
+        return C_BUILD_CACHE_DIR / self.import_path / "lib.o"
 
     def exe(self) -> Optional[pathlib.Path]:
         if not self.has_executable:
             return None
 
-        return C_CACHE_DIR / self.import_path / self.module_name()
+        return C_BUILD_CACHE_DIR / self.import_path / self.module_name()
 
     def is_submodule(self) -> bool:
         return self.parent is not None
@@ -159,30 +166,32 @@ class Module:
         #       anything. This only checks if we've already downloaded it
         #       during the current build, not if it was here from a previous
         #       build.
-        if (C_CACHE_DIR / import_path).exists():
-            moddir = C_CACHE_DIR / import_path
+        if (C_DOWNLOAD_DIR / import_path).exists():
+            # if (C_BUILD_CACHE_DIR / import_path).exists():
+            #     todo("make a module from")
+            moddir = C_DOWNLOAD_DIR / import_path
             if (moddir / "c.mod").exists():
-                return Module.from_directory(
-                    C_CACHE_DIR / import_path, preprocess=False
-                )
+                if import_path in MOD_CACHE:
+                    return MOD_CACHE[import_path]
+                return Module.from_directory(moddir)
 
             submod = import_path.split("/")[-1]
-            return Module.from_directory(moddir.parent, preprocess=False).get_submodule(
-                submod
-            )
+            if import_path in MOD_CACHE:
+                return MOD_CACHE[import_path]
+            return Module.from_directory(moddir.parent).get_submodule(submod)
 
         # It is a remote module
         print(f"downloading module {import_path}...")
 
         # First create the path where it will go
-        (C_CACHE_DIR / import_path).mkdir(parents=True, exist_ok=True)
+        (C_DOWNLOAD_DIR / import_path).mkdir(parents=True, exist_ok=True)
 
         # Convenience function to call git for us
         def git(*git_argv) -> subprocess.CompletedProcess[bytes]:
             argv = [
                 "git",
                 "-C",
-                str((C_CACHE_DIR / currentmod).resolve()),
+                str((C_DOWNLOAD_DIR / currentmod).resolve()),
             ]
             argv.extend(git_argv)
             if args.verbose:
@@ -212,7 +221,7 @@ class Module:
             break
 
         if args.verbose:
-            print(str(C_CACHE_DIR / currentmod))
+            print(str(C_DOWNLOAD_DIR / currentmod))
 
         # TODO: see if this is necessary
         # We do `git init; git remote add url git fetch; git checkout;`
@@ -240,7 +249,7 @@ class Module:
                 + f"'{self.import_path}')"
             )
 
-        moddir = C_CACHE_DIR / currentmod
+        moddir = C_DOWNLOAD_DIR / currentmod
         cmod = moddir / "c.mod"
         if not cmod.exists():
             error(
@@ -303,9 +312,8 @@ class Module:
 
                 mod.dependencies.append(imported_mod)
                 mod.dependencies.extend(imported_mod.dependencies)
-                lines[
-                    i
-                ] = f'#include "{(C_CACHE_DIR / imported_mod.import_path /"__module.h").resolve()}"'
+                new_include = C_BUILD_CACHE_DIR / imported_mod.import_path
+                lines[i] = f'#include "{(new_include /"__module.h").resolve()}"'
 
             # if the file is not local to the project, it will be in the cache
             # directory, and we should refer to it by its module path, not file
@@ -314,7 +322,7 @@ class Module:
             lines.insert(0, f'#line 1 "{name}"')
             lines = "\n".join(lines)
             # put preprocessed file in cache
-            out = C_CACHE_DIR / mod.import_path
+            out = C_BUILD_CACHE_DIR / mod.import_path
             if args.verbose:
                 print(f"writing include {out / file.name}")
             out.mkdir(exist_ok=True, parents=True)
@@ -328,7 +336,7 @@ class Module:
             Module._preprocess_dir(self.get_submodule(submod))
 
     @staticmethod
-    def from_directory(path: pathlib.Path, preprocess: bool = True) -> "Module":
+    def from_directory(path: pathlib.Path) -> "Module":
         """Returns a module given a directory with a c.mod file."""
         # parse c.mod file
         # result = Module()
@@ -381,6 +389,9 @@ class Module:
 
                 error(f"c.mod: unrecognized directive: {line[0]}")
 
+        if import_path in MOD_CACHE:
+            return MOD_CACHE[import_path]
+
         has_exe = (path / "main.c").exists()
         has_lib = (path / "lib.c").exists() or (path / (name + ".c")).exists()
         if (path / "lib.c").exists():
@@ -421,8 +432,8 @@ class Module:
             platform_flags=platform_flags,
         )
 
-        if preprocess:
-            result._preprocess()
+        result._preprocess()
+        MOD_CACHE[import_path] = result
         return result
 
 
@@ -430,9 +441,9 @@ def build(mod: Module, type: Literal["exe", "lib"]):
     if args.verbose:
         print(f'building module "{mod.import_path}" as {type}')
 
-    out = C_CACHE_DIR / mod.import_path
+    out = C_BUILD_CACHE_DIR / mod.import_path
     if mod.is_submodule():
-        out = C_CACHE_DIR / mod.parent.import_path / mod.module_name()
+        out = C_BUILD_CACHE_DIR / mod.parent.import_path / mod.module_name()
 
     out.mkdir(parents=True, exist_ok=True)
 
@@ -453,7 +464,11 @@ def build(mod: Module, type: Literal["exe", "lib"]):
     headers = []
     sources = []
     flags = []
+    previously_checked = set()
     for dep in mod.dependencies:
+        if dep.import_path in previously_checked:
+            continue
+        previously_checked.add(dep.import_path)
         headers.append(f"--include={dep.h()}")
         sources.append(dep.lib_c())
         flags.extend(dep.platform_flags.get(get_os(), []))
@@ -471,7 +486,7 @@ def build(mod: Module, type: Literal["exe", "lib"]):
     ]
     if type == "lib":
         argv.append("-c")
-    moddir = C_CACHE_DIR / mod.import_path
+    moddir = C_BUILD_CACHE_DIR / mod.import_path
     argv.append(str((moddir / libfile).resolve()))
     argv.extend(headers)
     argv.extend(sources)

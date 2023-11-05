@@ -19,6 +19,8 @@ panic(Arena* mem, const char* format, ...)
 	vfprintf(stderr, format, args);
 	va_end(args);
 
+	fprintf(stderr, "\n");
+
 	Backtrace b = backtrace(mem, 0, 1);
 	if (b.status < 0) {
 		exit(EXIT_FAILURE);
@@ -26,7 +28,7 @@ panic(Arena* mem, const char* format, ...)
 
 	fprintf(stderr, "backtrace (most recent call last):\n");
 	for (size_t i = 0; i < b.len; i += 1) {
-		fprintf(stderr, "%" PRIxPTR "\n", b.addresses[i]);
+		fprintf(stderr, "%" PRIxPTR "\n", b.data[i]);
 	}
 	exit(EXIT_FAILURE);
 }
