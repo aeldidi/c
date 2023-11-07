@@ -17,6 +17,8 @@ from typing import Literal, Optional
 
 # TODO: make the C implementation.
 # TODO: actually make sure things need to be rebuilt
+# TODO: when a dependency specifies a platform flag, build everything with that
+#       flag.
 
 DEFAULT_CACHE_DIR = ".cache"
 C_CACHE_DIR: pathlib.Path = (
@@ -378,13 +380,11 @@ class Module:
                     continue
                 elif line[0] == "os":
                     deps = []
-                    os = platform.system().lower()
-                    if os == "darwin":
-                        os = "macos"
+                    os = get_os()
                     if os == line[1]:
                         deps += line[2:]
 
-                    platform_flags[os] = deps
+                    platform_flags[line[1]] = deps
                     continue
 
                 error(f"c.mod: unrecognized directive: {line[0]}")
@@ -490,6 +490,7 @@ def build(mod: Module, type: Literal["exe", "lib"]):
     argv.append(str((moddir / libfile).resolve()))
     argv.extend(headers)
     argv.extend(sources)
+    argv.extend(flags)
 
     # remove duplicates
     argv = list(dict.fromkeys(argv))
