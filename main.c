@@ -99,13 +99,19 @@ main(int argc, char** argv)
 		     "commands:\n");
 		fs_foreach_file(dir, list_all_commands, NULL);
 		printf("\n");
+		free(memory);
+		free(memory_scratch);
 		return EXIT_SUCCESS;
 	}
 
 	if (!fs_foreach_file(dir, find_command_to_run, &fp)) {
 		fprintf(stderr, "error: couldn't read directory\n");
+		free(memory);
+		free(memory_scratch);
 		return EXIT_FAILURE;
 	}
 
+	free(memory);
+	free(memory_scratch);
 	return EXIT_SUCCESS;
 }
