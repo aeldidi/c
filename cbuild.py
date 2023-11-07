@@ -473,6 +473,9 @@ def build(mod: Module, type: Literal["exe", "lib"]):
         sources.append(dep.lib_c())
         flags.extend(dep.platform_flags.get(get_os(), []))
 
+    if type == "exe" and mod.has_lib:
+        sources.append(mod.lib_c())
+
     # assemble compile command
     argv = [
         C_CLANG_COMMAND,
