@@ -1,3 +1,4 @@
+#include <assert.h>
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdbool.h>
@@ -42,5 +43,83 @@ todo(const char* format, ...)
 	va_start(args, format);
 	vfprintf(stderr, format, args);
 	va_end(args);
+	fprintf(stderr, "\n");
 	exit(EXIT_FAILURE);
+}
+
+typedef struct FindInPathArg {
+	Arena* mem;
+	Arena  scratch;
+	char*  result;
+	char*  dir;
+	char*  target;
+} FindInPathArg;
+
+bool
+find_in_path_fn(char* path, void* arg)
+{
+	FindInPathArg* result = arg;
+	char* file      = str_format(result->mem, "%s/%s", result->dir, path);
+	file            = fs_resolve(result->mem, result->scratch, file);
+	StatResult stat = fs_metadata(file);
+	if (stat.status != 0) {
+		return true;
+	}
+
+	if (strcmp(path, result->target) != 0) {
+		return true;
+	}
+
+	result->result = file;
+	return false;
+}
+
+char*
+find_in_path(Arena* mem, Arena scratch, char* binary_name)
+{
+	assert(binary_name != NULL);
+	char* PATH = getenv("PATH");
+	if (PATH == NULL) {
+		return NULL;
+	}
+
+	StrSlice paths = str_split(&scratch, PATH, ':');
+	for (size_t i = 0; i < paths.len; i += 1) {
+		Arena         tmp = scratch;
+		FindInPathArg fp  = {
+				 .dir     = paths.data[i],
+				 .mem     = &tmp,
+				 .scratch = tmp,
+				 .target  = binary_name,
+                };
+		(void)fs_foreach_file(paths.data[i], find_in_path_fn, &fp);
+		if (fp.result == NULL) {
+			continue;
+		}
+
+		char* result = str_format(mem, "%s", fp.result);
+		return result;
+	}
+
+	return NULL;
+}
+
+Bytes
+readfull(Arena* mem, FILE* f)
+{
+	Bytes result = {.ok = false};
+	fseek(f, 0, SEEK_END);
+	size_t len = ftell(f);
+	fseek(f, 0, SEEK_SET);
+	uint8_t* tmp = arena_make(mem, uint8_t, len + 1);
+	result.data  = tmp;
+
+	if (fread(tmp, 1, len, f) != len) {
+		free(tmp);
+		return result;
+	}
+
+	result.ok  = true;
+	result.len = len;
+	return result;
 }

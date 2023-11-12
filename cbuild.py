@@ -16,7 +16,6 @@ from typing import Literal, Optional
 # repository, but also kept up to date with the C implementation.
 
 # TODO: make the C implementation.
-# TODO: actually make sure things need to be rebuilt
 # TODO: when a dependency specifies a platform flag, build everything with that
 #       flag.
 
@@ -71,7 +70,7 @@ class Module:
     submodules: list[str]
     platform_flags: dict[str, list[str]]
     parent: Optional["Module"] = None
-    dependencies: list["Module"] = field(default_factory=list)
+    dependencies: set["Module"] = field(default_factory=set)
 
     def get_submodule(self, name: str) -> Optional["Module"]:
         assert name in self.submodules
@@ -260,7 +259,11 @@ class Module:
             )
 
         result = Module.from_directory(moddir)
+        MOD_CACHE[result.import_path] = result
+        for submod in result.submodules:
+            MOD_CACHE[result.import_path + "/" + submod] = result.get_submodule(submod)
         if currentmod == import_path:
+            self.dependencies.add(result)
             # we imported the root module
             return result
 
@@ -272,12 +275,15 @@ class Module:
                 + f"(imported by {self.import_path})"
             )
 
-        return result.get_submodule(submodname)
+        result = result.get_submodule(submodname)
+        self.dependencies.add(result)
+        return result
 
     @staticmethod
     def _preprocess_dir(mod: "Module"):
         if args.verbose:
             print(f"preprocessing module '{mod.import_path}'")
+        # hash_dir = C_CACHE_DIR / "hash"
         for file in itertools.chain(mod.path.glob("*.c"), mod.path.glob("*.h")):
             if file.is_dir():
                 continue
@@ -312,8 +318,8 @@ class Module:
                         + "which is not allowed."
                     )
 
-                mod.dependencies.append(imported_mod)
-                mod.dependencies.extend(imported_mod.dependencies)
+                mod.dependencies.add(imported_mod.import_path)
+                mod.dependencies |= imported_mod.dependencies
                 new_include = C_BUILD_CACHE_DIR / imported_mod.import_path
                 lines[i] = f'#include "{(new_include /"__module.h").resolve()}"'
 
@@ -434,6 +440,8 @@ class Module:
 
         result._preprocess()
         MOD_CACHE[import_path] = result
+        for submod in result.submodules:
+            MOD_CACHE[result.import_path + "/" + submod] = result.get_submodule(submod)
         return result
 
 
@@ -464,11 +472,8 @@ def build(mod: Module, type: Literal["exe", "lib"]):
     headers = []
     sources = []
     flags = []
-    previously_checked = set()
     for dep in mod.dependencies:
-        if dep.import_path in previously_checked:
-            continue
-        previously_checked.add(dep.import_path)
+        dep = MOD_CACHE[dep]
         headers.append(f"--include={dep.h()}")
         sources.append(dep.lib_c())
         flags.extend(dep.platform_flags.get(get_os(), []))

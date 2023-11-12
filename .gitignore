@@ -4,4 +4,5 @@ cbuild/cbuild
 ccompile/ccompile
 crun/crun
 ctool/ctool
+cmod/cmod
 c
