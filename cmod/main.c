@@ -62,16 +62,14 @@ fmt(Arena* mem, Arena scratch, char* path)
 }
 
 int
-usage(char* argv_0)
+usage()
 {
-	fprintf(stderr,
-			"usage: %s <command> [args...]\n\n"
+	fprintf(stderr, "usage: cmod <command> [args...]\n\n"
 			"Availible commands:\n"
 			"\tinit - initialize a c.mod file in the "
 			"current dir\n"
 			"\tfmt - formats a given c.mod file to "
-			"stdout\n\n",
-			argv_0);
+			"stdout\n\n");
 	return EXIT_FAILURE;
 }
 
@@ -79,7 +77,7 @@ int
 main(int argc, char** argv)
 {
 	if (argc < 2) {
-		return usage(argv[0]);
+		return usage();
 	}
 
 	char*   memory      = malloc(1 << 16);
@@ -111,11 +109,7 @@ main(int argc, char** argv)
 			// is there a c.mod in the current directory?
 			StatResult meta = fs_metadata("./c.mod");
 			if (meta.status != 0) {
-				fprintf(stderr,
-						"usage: %s fmt <c.mod "
-						"file>\n",
-						argv[0]);
-				return EXIT_FAILURE;
+				return usage();
 			}
 
 			char* path = fs_resolve(&mem, scratch, "./c.mod");
@@ -140,7 +134,7 @@ main(int argc, char** argv)
 		return ret;
 	}
 
-	int ret = usage(argv[0]);
+	int ret = usage();
 	free(memory);
 	free(mem_scratch);
 	return ret;

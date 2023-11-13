@@ -16,11 +16,6 @@
 int
 main(int argc, char** argv)
 {
-	if (argc > 2) {
-		todo("handle arguments so they're not all forwarded to "
-		     "cbuild");
-	}
-
 	char*   memory         = malloc(1 << 16);
 	char*   memory_scratch = malloc(1 << 16);
 	jmp_buf jb;
@@ -50,7 +45,7 @@ main(int argc, char** argv)
 	// argv = ['/path/to/crun', 'program', args..]
 	char* argv_0 = argv[0];
 	argv[0]      = str_format(&mem, "%s/commands/cbuild", C_ROOT);
-	Process p    = process_spawn(scratch, argc, argv);
+	Process p    = process_spawn(scratch, 2, argv);
 	if (p.status != 0) {
 		panic(&mem, "failed to launch process");
 	}

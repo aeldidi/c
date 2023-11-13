@@ -29,7 +29,6 @@ find_command_to_run(char* file, void* arg)
 		return true;
 	}
 
-	// printf("comparing '%s' to '%s'\n", file + 1, command);
 	if (strcmp(file + 1, fp->command) != 0) {
 		return true;
 	}
@@ -48,8 +47,18 @@ list_all_commands(char* file, void* arg)
 		return true;
 	}
 
-	printf("\t%s\n", file + 1);
+	fprintf(stderr, "\t%s\n", file + 1);
 	return true;
+}
+
+int
+usage(char* dir)
+{
+	fprintf(stderr, "usage: c <command> [arguments]\n\nAvailible "
+			"commands:\n");
+	fs_foreach_file(dir, list_all_commands, NULL);
+	fprintf(stderr, "\n");
+	return EXIT_FAILURE;
 }
 
 // The main `c` tool. This just runs the other tools from the configured
@@ -95,13 +104,10 @@ main(int argc, char** argv)
 	fp.dir    = dir;
 
 	if (argc < 2) {
-		puts("usage: c <command> [arguments]\n\nAvailible "
-		     "commands:\n");
-		fs_foreach_file(dir, list_all_commands, NULL);
-		printf("\n");
+		int ret = usage(dir);
 		free(memory);
 		free(memory_scratch);
-		return EXIT_SUCCESS;
+		return ret;
 	}
 
 	if (!fs_foreach_file(dir, find_command_to_run, &fp)) {
@@ -111,7 +117,8 @@ main(int argc, char** argv)
 		return EXIT_FAILURE;
 	}
 
+	int ret = usage(dir);
 	free(memory);
 	free(memory_scratch);
-	return EXIT_SUCCESS;
+	return ret;
 }

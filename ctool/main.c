@@ -25,6 +25,8 @@ list_all_tools(char* file)
 	return true;
 }
 
+// TODO: work out the details here.
+
 // ctool builds a specified .c file from the `tools/` subdirectory into an
 // executable and runs it with the given arguments.
 //
