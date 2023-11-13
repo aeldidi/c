@@ -263,7 +263,7 @@ class Module:
         for submod in result.submodules:
             MOD_CACHE[result.import_path + "/" + submod] = result.get_submodule(submod)
         if currentmod == import_path:
-            self.dependencies.add(result)
+            self.dependencies.add(result.import_path)
             # we imported the root module
             return result
 
@@ -276,7 +276,7 @@ class Module:
             )
 
         result = result.get_submodule(submodname)
-        self.dependencies.add(result)
+        self.dependencies.add(result.import_path)
         return result
 
     @staticmethod
@@ -490,6 +490,14 @@ def build(mod: Module, type: Literal["exe", "lib"]):
         f"--include={mod.h()}",
         # TODO: remove if release flag is present.
         "-fsanitize=address,undefined",
+        "-Wall",
+        "-Wextra",
+        "-Werror=conversion",
+        "-Werror=shadow",
+        "-Wno-sign-conversion",  # so uint - 1 doesn't warn of conversion
+        "-fasynchronous-unwind-tables",  # so _Unwind_* always works.
+        "-Werror=format-security",
+        "-Werror=implicit-function-declaration",
         "-g3",
     ]
     if type == "lib":

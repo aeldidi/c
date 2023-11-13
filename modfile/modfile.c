@@ -95,9 +95,9 @@ modfile_parse(Arena* mem, Arena scratch, char* path)
 					&platform_flags,
 					str_format(mem, "%s", parts.data[1]));
 			for (size_t j = 2; j < parts.len; j += 1) {
-				char* tmp = str_format(
+				char* tmp_flag = str_format(
 						mem, "%s", parts.data[j]);
-				*slice_push(mem, flags) = tmp;
+				*slice_push(mem, flags) = tmp_flag;
 			}
 
 			continue;
