@@ -38,7 +38,7 @@ fmt(Arena* mem, Arena scratch, char* path)
 {
 	CModfile modfile = modfile_parse(mem, scratch, path);
 	if (modfile.status < 0) {
-		panic(mem, "error reading modfile");
+		panic("error reading modfile");
 	} else if (modfile.status > 0) {
 		fprintf(stderr, "%s:%" PRId64 ": syntax error\n", path,
 				modfile.status);
@@ -114,7 +114,7 @@ main(int argc, char** argv)
 
 			char* path = fs_resolve(&mem, scratch, "./c.mod");
 			if (path == NULL) {
-				panic(&mem, "couldn't resolve './c.mod'");
+				panic("couldn't resolve './c.mod'");
 			}
 
 			int ret = fmt(&mem, scratch, path);
@@ -125,7 +125,7 @@ main(int argc, char** argv)
 
 		char* path = fs_resolve(&mem, scratch, argv[2]);
 		if (path == NULL) {
-			panic(&mem, "couldn't resolve '%s'", argv[2]);
+			panic("couldn't resolve '%s'", argv[2]);
 		}
 
 		int ret = fmt(&mem, scratch, path);

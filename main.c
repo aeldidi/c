@@ -87,21 +87,12 @@ main(int argc, char** argv)
 			.jmp_buf = jb,
 	};
 
-	FindParams fp = {
-			.argc    = argc,
-			.argv    = argv,
-			.command = argv[1],
-			.mem     = &mem,
-			.scratch = scratch,
-	};
-
 	char* C_ROOT = getenv("C_ROOT");
 	if (C_ROOT == NULL) {
 		C_ROOT = "/c";
 	}
 
 	char* dir = str_format(&mem, "%s/commands", C_ROOT);
-	fp.dir    = dir;
 
 	if (argc < 2) {
 		int ret = usage(dir);
@@ -110,6 +101,14 @@ main(int argc, char** argv)
 		return ret;
 	}
 
+	FindParams fp = {
+			.argc    = argc,
+			.argv    = argv,
+			.command = argv[1],
+			.mem     = &mem,
+			.scratch = scratch,
+			.dir     = dir,
+	};
 	if (!fs_foreach_file(dir, find_command_to_run, &fp)) {
 		fprintf(stderr, "error: couldn't read directory\n");
 		free(memory);

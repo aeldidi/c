@@ -49,11 +49,13 @@ modfile_parse(Arena* mem, Arena scratch, char* path)
 
 	CPlatformFlags* platform_flags = &result.platform_flags;
 	StrSlice        lines = str_split(&scratch, (char*)cmod.data, '\n');
+	strslice_remove_empty(&lines);
 	for (size_t i = 0; i < lines.len; i += 1) {
 		Arena tmp  = scratch;
 		char* line = (char*)lines.data[i];
 		// TODO: handle all types of whitespace.
 		StrSlice parts = str_split(&tmp, line, ' ');
+		strslice_remove_empty(&parts);
 		if (parts.len == 0) {
 			continue;
 		}

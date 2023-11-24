@@ -1,5 +1,6 @@
 #include <assert.h>
 #include <inttypes.h>
+#include <setjmp.h>
 #include <stdarg.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -12,8 +13,9 @@
 
 // TODO: make this print the lines for each backtrace address if we can.
 noreturn void
-panic(Arena* mem, const char* format, ...)
+panic(const char* format, ...)
 {
+	assert(format != NULL);
 	fprintf(stderr, "panic: ");
 	va_list args;
 	va_start(args, format);
@@ -22,15 +24,33 @@ panic(Arena* mem, const char* format, ...)
 
 	fprintf(stderr, "\n");
 
-	Backtrace b = backtrace(mem, 0, 1);
-	if (b.status < 0) {
+	char*   backtrace_memory = malloc(sizeof(uintptr_t) * 100);
+	jmp_buf jb;
+	if (backtrace_memory == NULL || setjmp(jb)) {
+		free(backtrace_memory);
+		exit(EXIT_FAILURE);
+	}
+	Arena mem = {
+			.beg     = backtrace_memory,
+			.end     = backtrace_memory + sizeof(uintptr_t) * 100,
+			.jmp_buf = jb,
+	};
+
+	Backtrace b = backtrace(&mem, 100, 1);
+	if (b.status < 0 && b.status != BACKTRACE_TRUNCATED) {
+		free(backtrace_memory);
 		exit(EXIT_FAILURE);
 	}
 
 	fprintf(stderr, "backtrace (most recent call last):\n");
+	if (b.status == BACKTRACE_TRUNCATED) {
+		fprintf(stderr, "note: only the last 100 calls are shown.\n");
+	}
+
 	for (size_t i = 0; i < b.len; i += 1) {
 		fprintf(stderr, "%" PRIxPTR "\n", b.data[i]);
 	}
+	free(backtrace_memory);
 	exit(EXIT_FAILURE);
 }
 
@@ -58,6 +78,7 @@ typedef struct FindInPathArg {
 bool
 find_in_path_fn(char* path, void* arg)
 {
+	assert(path != NULL);
 	FindInPathArg* result = arg;
 	char* file      = str_format(result->mem, "%s/%s", result->dir, path);
 	file            = fs_resolve(result->mem, result->scratch, file);
@@ -107,6 +128,8 @@ find_in_path(Arena* mem, Arena scratch, char* binary_name)
 Bytes
 readfull(Arena* mem, FILE* f)
 {
+	assert(mem != NULL);
+	assert(f != NULL);
 	Bytes result = {.ok = false};
 	fseek(f, 0, SEEK_END);
 	size_t len = ftell(f);
@@ -122,4 +145,20 @@ readfull(Arena* mem, FILE* f)
 	result.ok  = true;
 	result.len = len;
 	return result;
+}
+
+void
+strslice_remove_empty(StrSlice* s)
+{
+	assert(s != NULL);
+	for (size_t j = 0; j < s->len; j += 1) {
+		if (*s->data[j] != '\0') {
+			continue;
+		}
+
+		s->len -= 1;
+		for (size_t k = j; k < s->len; k += 1) {
+			s->data[k] = s->data[k + 1];
+		}
+	}
 }

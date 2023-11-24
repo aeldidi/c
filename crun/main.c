@@ -47,7 +47,7 @@ main(int argc, char** argv)
 	argv[0]      = str_format(&mem, "%s/commands/cbuild", C_ROOT);
 	Process p    = process_spawn(scratch, 2, argv);
 	if (p.status != 0) {
-		panic(&mem, "failed to launch process");
+		panic("failed to launch process");
 	}
 	(void)process_wait(p, true);
 
@@ -71,5 +71,5 @@ main(int argc, char** argv)
 	argc -= 1;
 	argv[0] = exe;
 	process_exec(&mem, scratch, argc, argv);
-	panic(&mem, "error: couldn't exec binary '%s'", exe);
+	panic("error: couldn't exec binary '%s'", exe);
 }
